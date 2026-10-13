@@ -16,6 +16,7 @@ def snapshot(profile: dict) -> dict:
         "pokemonId": profile["id"],
         "name": profile["name"],
         "isMega": profile.get("isMega", False),
+        "isForm": profile.get("isForm", False),
         "sprite": profile["sprite"],
         "types": profile["types"],
         "stats": profile["stats"],
