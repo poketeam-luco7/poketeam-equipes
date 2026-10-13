@@ -41,3 +41,44 @@ def fight_boss(team: dict) -> dict:
     if r.status_code != 200:
         raise PokedexIndisponible()
     return r.json()
+
+
+# --- Mode Capture -------------------------------------------------------------------
+
+def _post_json(path: str, body: dict) -> dict:
+    r = _post(path, body)
+    if r.status_code == 404:
+        raise PokemonInconnu(r.json().get("detail", ""))
+    if r.status_code != 200:
+        raise PokedexIndisponible()
+    return r.json()
+
+
+def _get_json(path: str):
+    try:
+        r = httpx.get(f"{settings.POKEDEX_URL}{path}", timeout=30)
+    except httpx.HTTPError as e:
+        raise PokedexIndisponible() from e
+    if r.status_code != 200:
+        raise PokedexIndisponible()
+    return r.json()
+
+
+def capture_starters() -> list:
+    return _get_json("/capture/starters")
+
+
+def capture_state(unlocked: list, victories: dict) -> dict:
+    return _post_json("/capture/state", {"unlocked": unlocked, "victories": victories})
+
+
+def capture_encounters(tier: int, unlocked: list, exclude: list) -> list:
+    return _post_json("/capture/encounters", {"tier": tier, "unlocked": unlocked, "exclude": exclude})
+
+
+def capture_analyze(pokemon_ids: list, unlocked: list) -> dict:
+    return _post_json("/capture/analyze", {"pokemonIds": pokemon_ids, "unlocked": unlocked})
+
+
+def capture_fight(team: dict, wild_id: int, team_size: int) -> dict:
+    return _post_json("/capture/fight", {"team": team, "wildId": wild_id, "teamSize": team_size})
