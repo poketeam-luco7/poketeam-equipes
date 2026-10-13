@@ -34,3 +34,10 @@ def compare(team_a: dict, team_b: dict) -> dict:
     if r.status_code != 200:
         raise PokedexIndisponible()
     return r.json()
+
+
+def fight_boss(team: dict) -> dict:
+    r = _post("/boss/fight", {"team": team})
+    if r.status_code != 200:
+        raise PokedexIndisponible()
+    return r.json()

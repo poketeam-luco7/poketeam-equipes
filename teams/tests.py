@@ -7,14 +7,14 @@ from rest_framework.test import APISimpleTestCase
 from . import db
 
 PROFILES = {
-    6: {"id": 6, "name": "charizard", "sprite": "6.png", "types": ["fire", "flying"],
+    6: {"id": 6, "name": "charizard", "baseSpecies": "charizard", "sprite": "6.png", "types": ["fire", "flying"],
         "stats": {}, "statTotal": 534,
         "weaknesses": ["water", "electric", "rock"],
         "resistances": ["fire", "grass", "fighting", "ground", "bug", "steel", "fairy"]},
     9: {"id": 9, "name": "blastoise", "sprite": "9.png", "types": ["water"],
         "stats": {}, "statTotal": 530,
         "weaknesses": ["electric", "grass"], "resistances": ["fire", "water", "ice", "steel"]},
-    10034: {"id": 10034, "name": "charizard-mega-x", "sprite": "10034.png", "types": ["fire", "dragon"],
+    10034: {"id": 10034, "name": "charizard-mega-x", "baseSpecies": "charizard", "sprite": "10034.png", "types": ["fire", "dragon"],
             "isMega": True, "stats": {}, "statTotal": 634,
             "weaknesses": ["ground", "rock", "dragon"], "resistances": ["fire", "steel", "bug", "electric", "fairy"]},
     10041: {"id": 10041, "name": "gyarados-mega", "sprite": "10041.png", "types": ["water", "dark"],
@@ -78,6 +78,13 @@ class EquipesTests(APISimpleTestCase):
         self.assertEqual(self.create(poke1=None).status_code, 400)       # aucun Pokémon
         self.assertEqual(self.create(poke1=99999).status_code, 400)      # inconnu
 
+    def test_un_seul_exemplaire_par_espece(self, _):
+        r = self.create(poke1=6, poke2=25, poke3=6)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Un seul exemplaire", r.json()["error"])
+        # une Méga compte comme son espèce de base
+        self.assertEqual(self.create(poke1=6, poke2=10034).status_code, 400)
+
     def test_une_seule_mega_par_equipe(self, _):
         r = self.create(poke1=10034, poke2=25)
         self.assertEqual(r.status_code, 201)
@@ -119,6 +126,19 @@ class EquipesTests(APISimpleTestCase):
         self.assertEqual(team_a["statTotal"], 534)
         self.assertEqual(team_b["offensiveTypes"], ["water"])
         self.assertEqual(r.json()["teams"]["B"]["members"][0]["sprite"], "9.png")
+
+    def test_combat_contre_le_boss(self, _):
+        tid = self.create(nom="Eau", poke1=9).json()["idTeam"]
+        boss = {"id": 384, "name": "rayquaza-mega", "sprite": "384.png", "artwork": "art.png",
+                "types": ["dragon", "flying"], "isMega": True}
+        with patch("teams.pokedex.fight_boss", return_value={"winner": "B", "boss": boss}) as fight:
+            r = self.client.post(f"/teams/{tid}/boss", **self.as_user(1))
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(fight.call_args.args[0]["statTotal"], 530)
+        self.assertTrue(r.json()["teams"]["B"]["boss"])
+        self.assertEqual(r.json()["teams"]["B"]["members"][0]["artwork"], "art.png")
+        # l'équipe d'un autre dresseur ne peut pas être envoyée au combat
+        self.assertEqual(self.client.post(f"/teams/{tid}/boss", **self.as_user(2)).status_code, 404)
 
     def test_versus_equipe_privee_d_un_autre(self, _):
         mine = self.create(uid=1).json()["idTeam"]

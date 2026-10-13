@@ -7,7 +7,7 @@ from rest_framework.views import APIView
 
 from . import pokedex
 from .db import teams_collection
-from .domain import MAX_MEMBERS, check_megas, extract_pokemon_ids, snapshot, to_api
+from .domain import MAX_MEMBERS, check_megas, check_species, extract_pokemon_ids, snapshot, to_api
 
 
 class TeamSerializer(serializers.Serializer):
@@ -48,7 +48,7 @@ def build_members(data):
         return None, None, error(f"Pokémon inconnu : {e}", 400)
     except pokedex.PokedexIndisponible:
         return None, None, error("Service Pokédex indisponible", 503)
-    regle = check_megas(analyse["members"])
+    regle = check_species(analyse["members"]) or check_megas(analyse["members"])
     if regle:
         return None, None, error(regle, 400)
     return [snapshot(p) for p in analyse["members"]], analyse["summary"], None
@@ -144,6 +144,32 @@ class VersusView(AuthenticatedView):
             return error("Service Pokédex indisponible", 503)
         # Le front a besoin des sprites pour afficher l'affrontement
         result["teams"] = {"A": to_api(a), "B": to_api(b)}
+        return Response(result)
+
+
+class BossView(AuthenticatedView):
+    def post(self, request, team_id):
+        """Ton équipe contre le boss de la semaine."""
+        team = find_team(team_id)
+        if team is None or team["userId"] != self.uid:
+            return error("Équipe introuvable", 404)
+        try:
+            result = pokedex.fight_boss({"name": team["nom"], **team["summary"]})
+        except pokedex.PokedexIndisponible:
+            return error("Service Pokédex indisponible", 503)
+        boss = result["boss"]
+        # Même format que le versus : le front réutilise la même arène
+        result["teams"] = {
+            "A": to_api(team),
+            "B": {
+                "nom": boss["name"],
+                "boss": True,
+                "members": [{
+                    "pokemonId": boss["id"], "name": boss["name"], "sprite": boss["sprite"],
+                    "artwork": boss["artwork"], "types": boss["types"], "isMega": boss.get("isMega", False),
+                }],
+            },
+        }
         return Response(result)
 
 

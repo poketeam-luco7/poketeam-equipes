@@ -25,6 +25,18 @@ def snapshot(profile: dict) -> dict:
     }
 
 
+def check_species(profiles: list[dict]):
+    """Species Clause : une seule fois chaque espèce par équipe
+    (une Méga compte comme son espèce de base : Dracaufeu + Méga-Dracaufeu X est refusé)."""
+    seen = set()
+    for p in profiles:
+        species = p.get("baseSpecies") or p["name"]
+        if species in seen:
+            return f"Un seul exemplaire de chaque Pokémon par équipe ({species})"
+        seen.add(species)
+    return None
+
+
 def check_megas(profiles: list[dict]):
     """Renvoie un message d'erreur si l'équipe viole la règle des Méga, sinon None."""
     megas = [p["name"] for p in profiles if p.get("isMega")]
