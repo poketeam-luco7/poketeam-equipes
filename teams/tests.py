@@ -14,21 +14,40 @@ PROFILES = {
     9: {"id": 9, "name": "blastoise", "sprite": "9.png", "types": ["water"],
         "stats": {}, "statTotal": 530,
         "weaknesses": ["electric", "grass"], "resistances": ["fire", "water", "ice", "steel"]},
+    10034: {"id": 10034, "name": "charizard-mega-x", "sprite": "10034.png", "types": ["fire", "dragon"],
+            "isMega": True, "stats": {}, "statTotal": 634,
+            "weaknesses": ["ground", "rock", "dragon"], "resistances": ["fire", "steel", "bug", "electric", "fairy"]},
+    10041: {"id": 10041, "name": "gyarados-mega", "sprite": "10041.png", "types": ["water", "dark"],
+            "isMega": True, "stats": {}, "statTotal": 640,
+            "weaknesses": ["electric", "grass", "fighting", "bug", "fairy"],
+            "resistances": ["fire", "water", "ice", "steel", "ghost", "dark", "psychic"]},
     25: {"id": 25, "name": "pikachu", "sprite": "25.png", "types": ["electric"],
          "stats": {}, "statTotal": 320,
          "weaknesses": ["ground"], "resistances": ["electric", "flying", "steel"]},
 }
 
 
-def fake_profile(pid):
+def fake_analyze(ids):
+    """Imite POST /teams/analyze du Pokédex (profils + summary)."""
     from .pokedex import PokemonInconnu
-    if int(pid) not in PROFILES:
-        raise PokemonInconnu(pid)
-    return PROFILES[int(pid)]
+    unknown = [i for i in ids if int(i) not in PROFILES]
+    if unknown:
+        raise PokemonInconnu(unknown[0])
+    members = [PROFILES[int(i)] for i in ids]
+    weak, resist, offensive = {}, {}, []
+    for m in members:
+        for t in m["weaknesses"]:
+            weak[t] = weak.get(t, 0) + 1
+        for t in m["resistances"]:
+            resist[t] = resist.get(t, 0) + 1
+        offensive += [t for t in m["types"] if t not in offensive]
+    summary = {"statTotal": sum(m["statTotal"] for m in members), "weak": weak,
+               "resist": resist, "offensiveTypes": offensive}
+    return {"members": members, "summary": summary}
 
 
 @override_settings(MONGO_DB="equipes_test")
-@patch("teams.pokedex._get_profile", side_effect=fake_profile)
+@patch("teams.pokedex.analyze", side_effect=fake_analyze)
 class EquipesTests(APISimpleTestCase):
     def setUp(self):
         db.teams_collection().delete_many({})
@@ -58,6 +77,14 @@ class EquipesTests(APISimpleTestCase):
     def test_creation_invalide(self, _):
         self.assertEqual(self.create(poke1=None).status_code, 400)       # aucun Pokémon
         self.assertEqual(self.create(poke1=99999).status_code, 400)      # inconnu
+
+    def test_une_seule_mega_par_equipe(self, _):
+        r = self.create(poke1=10034, poke2=25)
+        self.assertEqual(r.status_code, 201)
+        self.assertTrue(r.json()["members"][0]["isMega"])
+        r = self.create(poke1=10034, poke2=10041)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Une seule Méga", r.json()["error"])
 
     def test_liste_uniquement_mes_equipes(self, _):
         self.create(uid=1)

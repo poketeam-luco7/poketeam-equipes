@@ -1,6 +1,7 @@
 """Règles métier des équipes, indépendantes de Django et de MongoDB."""
 
 MAX_MEMBERS = 6
+MAX_MEGAS = 1  # règle officielle : une seule Méga-Évolution par équipe
 
 
 def extract_pokemon_ids(data: dict) -> list:
@@ -14,6 +15,7 @@ def snapshot(profile: dict) -> dict:
     return {
         "pokemonId": profile["id"],
         "name": profile["name"],
+        "isMega": profile.get("isMega", False),
         "sprite": profile["sprite"],
         "types": profile["types"],
         "stats": profile["stats"],
@@ -23,23 +25,12 @@ def snapshot(profile: dict) -> dict:
     }
 
 
-def build_summary(members: list[dict]) -> dict:
-    """Chaque Pokémon ajoute +1 dans chacune de ses faiblesses et résistances."""
-    weak, resist, offensive = {}, {}, []
-    for m in members:
-        for t in m["weaknesses"]:
-            weak[t] = weak.get(t, 0) + 1
-        for t in m["resistances"]:
-            resist[t] = resist.get(t, 0) + 1
-        for t in m["types"]:
-            if t not in offensive:
-                offensive.append(t)
-    return {
-        "statTotal": sum(m["statTotal"] for m in members),
-        "weak": weak,
-        "resist": resist,
-        "offensiveTypes": offensive,
-    }
+def check_megas(profiles: list[dict]):
+    """Renvoie un message d'erreur si l'équipe viole la règle des Méga, sinon None."""
+    megas = [p["name"] for p in profiles if p.get("isMega")]
+    if len(megas) > MAX_MEGAS:
+        return f"Une seule Méga-Évolution par équipe ({', '.join(megas)})"
+    return None
 
 
 def to_api(doc: dict) -> dict:

@@ -7,7 +7,7 @@ from rest_framework.views import APIView
 
 from . import pokedex
 from .db import teams_collection
-from .domain import MAX_MEMBERS, build_summary, extract_pokemon_ids, snapshot, to_api
+from .domain import MAX_MEMBERS, check_megas, extract_pokemon_ids, snapshot, to_api
 
 
 class TeamSerializer(serializers.Serializer):
@@ -37,18 +37,21 @@ def can_see(doc, uid):
 
 
 def build_members(data):
-    """Valide la liste, demande les profils au Pokédex et construit les instantanés.
-    Renvoie (membres, None) ou (None, Response d'erreur)."""
+    """Valide la liste, fait analyser l'équipe par le Pokédex et construit les instantanés.
+    Renvoie (membres, summary, None) ou (None, None, Response d'erreur)."""
     ids = extract_pokemon_ids(data)
     if not 1 <= len(ids) <= MAX_MEMBERS:
-        return None, error(f"Une équipe contient entre 1 et {MAX_MEMBERS} Pokémon", 400)
+        return None, None, error(f"Une équipe contient entre 1 et {MAX_MEMBERS} Pokémon", 400)
     try:
-        profiles = pokedex.fetch_profiles(ids)
+        analyse = pokedex.analyze(ids)
     except pokedex.PokemonInconnu as e:
-        return None, error(f"Pokémon inconnu : {e}", 400)
+        return None, None, error(f"Pokémon inconnu : {e}", 400)
     except pokedex.PokedexIndisponible:
-        return None, error("Service Pokédex indisponible", 503)
-    return [snapshot(p) for p in profiles], None
+        return None, None, error("Service Pokédex indisponible", 503)
+    regle = check_megas(analyse["members"])
+    if regle:
+        return None, None, error(regle, 400)
+    return [snapshot(p) for p in analyse["members"]], analyse["summary"], None
 
 
 class NonAuthentifie(APIException):
@@ -75,7 +78,7 @@ class TeamsView(AuthenticatedView):
     def post(self, request):
         s = TeamSerializer(data=request.data)
         s.is_valid(raise_exception=True)
-        members, err = build_members(request.data)
+        members, summary, err = build_members(request.data)
         if err:
             return err
         doc = {
@@ -84,7 +87,7 @@ class TeamsView(AuthenticatedView):
             "typePrincipal": s.validated_data.get("typePrincipal", ""),
             "isPublic": s.validated_data.get("isPublic", False),
             "members": members,
-            "summary": build_summary(members),
+            "summary": summary,
         }
         doc["_id"] = teams_collection().insert_one(doc).inserted_id
         return Response(to_api(doc), status=status.HTTP_201_CREATED)
@@ -111,11 +114,11 @@ class TeamDetailView(AuthenticatedView):
         s.is_valid(raise_exception=True)
         changes = dict(s.validated_data)
         if extract_pokemon_ids(request.data):
-            members, err = build_members(request.data)
+            members, summary, err = build_members(request.data)
             if err:
                 return err
             changes["members"] = members
-            changes["summary"] = build_summary(members)
+            changes["summary"] = summary
         teams_collection().update_one({"_id": doc["_id"]}, {"$set": changes})
         return Response(to_api({**doc, **changes}))
 
