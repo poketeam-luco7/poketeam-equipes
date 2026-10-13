@@ -82,3 +82,8 @@ def capture_analyze(pokemon_ids: list, unlocked: list) -> dict:
 
 def capture_fight(team: dict, wild_id: int, team_size: int) -> dict:
     return _post_json("/capture/fight", {"team": team, "wildId": wild_id, "teamSize": team_size})
+
+
+def capture_locked(teams: dict) -> dict:
+    """{clé: {pokemonIds, unlocked}} -> {clé: [Pokémon non débloqués]}"""
+    return _post_json("/capture/locked", {"teams": teams})

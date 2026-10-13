@@ -12,7 +12,6 @@ urlpatterns = [
     path("teams/<str:team_id>", TeamDetailView.as_view()),               # GET, PUT, DELETE
     path("capture", capture.CaptureView.as_view()),
     path("capture/start", capture.CaptureStartView.as_view()),
-    path("capture/team", capture.CaptureTeamView.as_view()),
     path("capture/run", capture.CaptureRunView.as_view()),
     path("capture/run/fight", capture.CaptureFightView.as_view()),
     path("capture/run/reward", capture.CaptureRewardView.as_view()),

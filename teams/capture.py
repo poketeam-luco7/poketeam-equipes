@@ -11,8 +11,8 @@ from rest_framework import status
 from rest_framework.response import Response
 
 from . import pokedex
-from .db import teams_collection
-from .domain import check_megas, check_species
+from .db import captures_collection
+from .domain import MAX_MEMBERS, check_megas, check_species, snapshot
 from .views import AuthenticatedView, error
 
 ROUNDS_PER_RUN = 3
@@ -20,9 +20,7 @@ ROUNDS_PER_RUN = 3
 
 def captures():
     """Collection MongoDB voisine des équipes : un document par dresseur."""
-    col = teams_collection().database["captures"]
-    col.create_index("userId", unique=True)
-    return col
+    return captures_collection()
 
 
 def load(uid):
@@ -47,20 +45,34 @@ def apply_evolutions(uid):
 def public(doc, state):
     return {
         "starter": doc["starter"],
-        "team": doc.get("team", []),
         "victories": doc.get("victories", {}),
         "run": doc.get("run"),
         "choices": state["progression"]["choices"],
         "progress": state["progression"]["progress"],
         "collection": state["collection"],
         "tiers": state["tiers"],
+        # Pour la création d'équipe (silhouettes) et le Pokédex du dresseur
+        "unlockedSpecies": state.get("unlockedSpecies", []),
+        "unlockedMegas": state.get("unlockedMegas", []),
+        "pokedex": state.get("pokedex"),
     }
 
 
-def team_members(doc):
-    """Analyse l'équipe de capture (et vérifie que tout est débloqué)."""
-    analyse = pokedex.capture_analyze(doc["team"], doc["unlocked"])
-    return analyse
+def run_team(ids, unlocked):
+    """Équipe composée au lancement de la run : (membres, summary, None) ou (None, None, erreur)."""
+    ids = [i for i in ids if i not in (None, "", 0)]
+    if not 1 <= len(ids) <= MAX_MEMBERS:
+        return None, None, error(f"Une équipe contient entre 1 et {MAX_MEMBERS} Pokémon", 400)
+    try:
+        analyse = pokedex.capture_analyze(ids, unlocked)
+    except pokedex.PokemonInconnu as e:
+        return None, None, error(f"Pokémon inconnu : {e}", 400)
+    if analyse["forbidden"]:
+        return None, None, error(f"Pas encore débloqué : {', '.join(analyse['forbidden'])}", 400)
+    regle = check_species(analyse["members"]) or check_megas(analyse["members"])
+    if regle:
+        return None, None, error(regle, 400)
+    return [snapshot(m) for m in analyse["members"]], analyse["summary"], None
 
 
 class CaptureView(AuthenticatedView):
@@ -68,6 +80,9 @@ class CaptureView(AuthenticatedView):
         doc = load(self.uid)
         if doc is None:
             return Response({"started": False, "starters": pokedex.capture_starters()})
+        if doc.get("run") and "team" not in doc["run"]:
+            # run lancée avant que l'équipe soit composée à chaque run : on l'annule
+            captures().update_one({"userId": self.uid}, {"$set": {"run": None}})
         _, state = apply_evolutions(self.uid)
         return Response({"started": True, **public(load(self.uid), state)})
 
@@ -81,34 +96,15 @@ class CaptureStartView(AuthenticatedView):
         if load(self.uid):
             return error("Tu as déjà commencé le mode Capture", 409)
         captures().insert_one({"userId": self.uid, "starter": starter, "unlocked": [starter],
-                               "team": [starter], "victories": {}, "run": None, "choices": []})
+                               "victories": {}, "run": None, "choices": []})
         doc = load(self.uid)
         return Response(public(doc, pokedex.capture_state(doc["unlocked"], {})), status=status.HTTP_201_CREATED)
 
 
-class CaptureTeamView(AuthenticatedView):
-    def put(self, request):
-        doc = load(self.uid)
-        if doc is None:
-            return error("Mode Capture non commencé", 404)
-        if doc.get("run"):
-            return error("Impossible de changer d'équipe pendant une run", 409)
-        ids = [i for i in request.data.get("pokemonIds", []) if i not in (None, "", 0)]
-        if not 1 <= len(ids) <= 6:
-            return error("Une équipe contient entre 1 et 6 Pokémon", 400)
-        analyse = pokedex.capture_analyze(ids, doc["unlocked"])
-        if analyse["forbidden"]:
-            return error(f"Pas encore débloqué : {', '.join(analyse['forbidden'])}", 400)
-        regle = check_species(analyse["members"]) or check_megas(analyse["members"])
-        if regle:
-            return error(regle, 400)
-        captures().update_one({"userId": self.uid}, {"$set": {"team": ids}})
-        return Response({"team": ids, "analyse": analyse})
-
-
 class CaptureRunView(AuthenticatedView):
     def post(self, request):
-        """Démarre une run dans un palier : 3 combats d'affilée."""
+        """Démarre une run dans un palier : 3 combats d'affilée, avec une équipe composée
+        pour l'occasion et figée jusqu'à la capture ou la défaite."""
         doc = load(self.uid)
         if doc is None:
             return error("Mode Capture non commencé", 404)
@@ -117,10 +113,14 @@ class CaptureRunView(AuthenticatedView):
         tier = request.data.get("tier")
         if not isinstance(tier, int):
             return error("Palier invalide", 400)
+        members, summary, err = run_team(request.data.get("pokemonIds", []), doc["unlocked"])
+        if err:
+            return err
         candidates = pokedex.capture_encounters(tier, doc["unlocked"], [])
         if not candidates:
             return error("Plus aucun Pokémon à capturer dans ce palier", 400)
-        run = {"tier": tier, "round": 1, "candidates": candidates, "defeated": [], "reward": False}
+        run = {"tier": tier, "round": 1, "candidates": candidates, "defeated": [], "reward": False,
+               "team": members, "summary": summary}
         captures().update_one({"userId": self.uid}, {"$set": {"run": run}})
         return Response(run, status=status.HTTP_201_CREATED)
 
@@ -139,15 +139,13 @@ class CaptureFightView(AuthenticatedView):
         if wild is None:
             return error("Ce Pokémon ne fait pas partie des adversaires proposés", 400)
 
-        analyse = team_members(doc)
-        if analyse["forbidden"]:
-            return error("Ton équipe contient des Pokémon non débloqués", 400)
-        result = pokedex.capture_fight({"name": "Ton équipe", **analyse["summary"]}, wild["id"], len(analyse["members"]))
+        team = run["team"]
+        result = pokedex.capture_fight({"name": "Ton équipe", **run["summary"]}, wild["id"], len(team))
         won = result["winner"] == "A"
 
         if won:
             # +1 victoire pour chaque membre engagé (par espèce : une Méga compte pour son espèce)
-            inc = {f"victories.{m['baseSpecies']}": 1 for m in analyse["members"]}
+            inc = {f"victories.{m['baseSpecies']}": 1 for m in team}
             defeated = run["defeated"] + [wild]
             finished = len(defeated) >= ROUNDS_PER_RUN
             new_run = {**run, "defeated": defeated, "round": run["round"] + 1, "reward": finished,
@@ -168,8 +166,7 @@ class CaptureFightView(AuthenticatedView):
 
         doc = load(self.uid)
         result["teams"] = {
-            "A": {"nom": "Ton équipe", "summary": analyse["summary"],
-                  "members": [{**m, "pokemonId": m["id"]} for m in analyse["members"]]},
+            "A": {"nom": "Ton équipe", "summary": run["summary"], "members": team},
             "B": {"nom": wild["name"], "sauvage": True, "members": [{**result["wild"], "pokemonId": wild["id"]}]},
         }
         return Response({"combat": result, "won": won, "evolutions": unlocked_now, **public(doc, state)})

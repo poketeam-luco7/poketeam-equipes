@@ -17,6 +17,7 @@ def snapshot(profile: dict) -> dict:
         "name": profile["name"],
         "isMega": profile.get("isMega", False),
         "isForm": profile.get("isForm", False),
+        "baseSpecies": profile.get("baseSpecies") or profile["name"],
         "sprite": profile["sprite"],
         "types": profile["types"],
         "stats": profile["stats"],

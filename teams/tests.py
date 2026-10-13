@@ -27,7 +27,7 @@ PROFILES = {
 }
 
 
-def fake_analyze(ids):
+def fake_analyze(ids, unlocked=None):
     """Imite POST /teams/analyze du Pokédex (profils + summary)."""
     from .pokedex import PokemonInconnu
     unknown = [i for i in ids if int(i) not in PROFILES]
@@ -43,14 +43,29 @@ def fake_analyze(ids):
         offensive += [t for t in m["types"] if t not in offensive]
     summary = {"statTotal": sum(m["statTotal"] for m in members), "weak": weak,
                "resist": resist, "offensiveTypes": offensive}
-    return {"members": members, "summary": summary}
+    forbidden = [m["name"] for m in members if unlocked is not None and m["id"] not in unlocked]
+    return {"members": members, "summary": summary, "forbidden": forbidden}
+
+
+LOCKED = {"ids": set()}  # Pokémon considérés comme non débloqués par capture_locked
+
+
+def fake_locked(teams):
+    return {k: [PROFILES[int(i)]["name"] for i in t["pokemonIds"] if int(i) in LOCKED["ids"]]
+            for k, t in teams.items()}
 
 
 @override_settings(MONGO_DB="equipes_test")
-@patch("teams.pokedex.analyze", side_effect=fake_analyze)
+@patch("teams.pokedex.capture_locked", side_effect=fake_locked)
+@patch("teams.pokedex.capture_analyze", side_effect=fake_analyze)
 class EquipesTests(APISimpleTestCase):
     def setUp(self):
         db.teams_collection().delete_many({})
+        db.captures_collection().delete_many({})
+        LOCKED["ids"] = set()
+        # les dresseurs 1 et 2 ont tout débloqué en mode Capture
+        for uid in ("1", "2"):
+            db.captures_collection().insert_one({"userId": uid, "unlocked": list(PROFILES)})
 
     def as_user(self, uid):
         return {"HTTP_X_USER_ID": str(uid)}
@@ -59,10 +74,10 @@ class EquipesTests(APISimpleTestCase):
         body = {"nom": nom, **(pokes or {"poke1": 6, "poke2": 25})}
         return self.client.post("/teams", body, format="json", **self.as_user(uid))
 
-    def test_sans_en_tete_gateway(self, _):
+    def test_sans_en_tete_gateway(self, *_):
         self.assertEqual(self.client.get("/teams").status_code, 401)
 
-    def test_creation_instantane_et_summary(self, _):
+    def test_creation_instantane_et_summary(self, *_):
         r = self.create()
         self.assertEqual(r.status_code, 201)
         t = r.json()
@@ -74,18 +89,18 @@ class EquipesTests(APISimpleTestCase):
         self.assertEqual(s["resist"]["steel"], 2)       # les deux
         self.assertEqual(s["offensiveTypes"], ["fire", "flying", "electric"])
 
-    def test_creation_invalide(self, _):
+    def test_creation_invalide(self, *_):
         self.assertEqual(self.create(poke1=None).status_code, 400)       # aucun Pokémon
         self.assertEqual(self.create(poke1=99999).status_code, 400)      # inconnu
 
-    def test_un_seul_exemplaire_par_espece(self, _):
+    def test_un_seul_exemplaire_par_espece(self, *_):
         r = self.create(poke1=6, poke2=25, poke3=6)
         self.assertEqual(r.status_code, 400)
         self.assertIn("Un seul exemplaire", r.json()["error"])
         # une Méga compte comme son espèce de base
         self.assertEqual(self.create(poke1=6, poke2=10034).status_code, 400)
 
-    def test_une_seule_mega_par_equipe(self, _):
+    def test_une_seule_mega_par_equipe(self, *_):
         r = self.create(poke1=10034, poke2=25)
         self.assertEqual(r.status_code, 201)
         self.assertTrue(r.json()["members"][0]["isMega"])
@@ -93,29 +108,29 @@ class EquipesTests(APISimpleTestCase):
         self.assertEqual(r.status_code, 400)
         self.assertIn("Une seule Méga", r.json()["error"])
 
-    def test_liste_uniquement_mes_equipes(self, _):
+    def test_liste_uniquement_mes_equipes(self, *_):
         self.create(uid=1)
         self.create(uid=2)
         r = self.client.get("/teams", **self.as_user(1))
         self.assertEqual(len(r.json()), 1)
 
-    def test_suppression_par_le_proprietaire_uniquement(self, _):
+    def test_suppression_par_le_proprietaire_uniquement(self, *_):
         tid = self.create(uid=1).json()["idTeam"]
         self.assertEqual(self.client.delete(f"/teams/{tid}", **self.as_user(2)).status_code, 404)
         self.assertEqual(self.client.delete(f"/teams/{tid}", **self.as_user(1)).status_code, 204)
         self.assertEqual(self.client.get(f"/teams/{tid}", **self.as_user(1)).status_code, 404)
 
-    def test_id_invalide(self, _):
+    def test_id_invalide(self, *_):
         self.assertEqual(self.client.get("/teams/pas-un-id", **self.as_user(1)).status_code, 404)
 
-    def test_modification(self, _):
+    def test_modification(self, *_):
         tid = self.create().json()["idTeam"]
         r = self.client.put(f"/teams/{tid}", {"nom": "Team Eau", "poke1": 9}, format="json",
                             **self.as_user(1))
         self.assertEqual(r.json()["nom"], "Team Eau")
         self.assertEqual(r.json()["summary"]["statTotal"], 530)
 
-    def test_versus_envoie_les_summaries_au_pokedex(self, _):
+    def test_versus_envoie_les_summaries_au_pokedex(self, *_):
         a = self.create(nom="Feu", poke1=6).json()["idTeam"]
         b = self.create(nom="Eau", poke1=9).json()["idTeam"]
         with patch("teams.pokedex.compare", return_value={"winner": "B"}) as compare:
@@ -127,7 +142,7 @@ class EquipesTests(APISimpleTestCase):
         self.assertEqual(team_b["offensiveTypes"], ["water"])
         self.assertEqual(r.json()["teams"]["B"]["members"][0]["sprite"], "9.png")
 
-    def test_combat_contre_le_boss(self, _):
+    def test_combat_contre_le_boss(self, *_):
         tid = self.create(nom="Eau", poke1=9).json()["idTeam"]
         boss = {"id": 384, "name": "rayquaza-mega", "sprite": "384.png", "artwork": "art.png",
                 "types": ["dragon", "flying"], "isMega": True}
@@ -140,13 +155,13 @@ class EquipesTests(APISimpleTestCase):
         # l'équipe d'un autre dresseur ne peut pas être envoyée au combat
         self.assertEqual(self.client.post(f"/teams/{tid}/boss", **self.as_user(2)).status_code, 404)
 
-    def test_versus_equipe_privee_d_un_autre(self, _):
+    def test_versus_equipe_privee_d_un_autre(self, *_):
         mine = self.create(uid=1).json()["idTeam"]
         other = self.create(uid=2).json()["idTeam"]
         r = self.client.post(f"/teams/{mine}/versus/{other}", **self.as_user(1))
         self.assertEqual(r.status_code, 404)
 
-    def test_versus_equipe_publique_d_un_autre(self, _):
+    def test_versus_equipe_publique_d_un_autre(self, *_):
         mine = self.create(uid=1).json()["idTeam"]
         other = self.client.post("/teams", {"nom": "Pub", "poke1": 9, "isPublic": True},
                                  format="json", **self.as_user(2)).json()["idTeam"]
@@ -154,3 +169,23 @@ class EquipesTests(APISimpleTestCase):
             r = self.client.post(f"/teams/{mine}/versus/{other}", **self.as_user(1))
         self.assertEqual(r.status_code, 200)
         self.assertEqual(len(self.client.get("/teams/public", **self.as_user(1)).json()), 1)
+
+    def test_creation_limitee_aux_pokemon_debloques(self, *_):
+        db.captures_collection().update_one({"userId": "1"}, {"$set": {"unlocked": [6]}})
+        r = self.create(poke1=6, poke2=25)
+        self.assertEqual(r.status_code, 403)
+        self.assertIn("pikachu", r.json()["error"])
+        self.assertEqual(self.create(poke1=6).status_code, 201)
+        # sans avoir commencé le mode Capture, rien n'est débloqué
+        self.assertEqual(self.create(uid=3, poke1=6).status_code, 403)
+
+    def test_equipe_verrouillee_hors_combat(self, *_):
+        a = self.create(nom="Feu", poke1=6).json()["idTeam"]
+        b = self.create(nom="Eau", poke1=9).json()["idTeam"]
+        LOCKED["ids"] = {9}
+        liste = {t["nom"]: t["locked"] for t in self.client.get("/teams", **self.as_user(1)).json()}
+        self.assertEqual(liste, {"Feu": [], "Eau": ["blastoise"]})
+        r = self.client.post(f"/teams/{a}/versus/{b}", **self.as_user(1))
+        self.assertEqual(r.status_code, 409)
+        self.assertIn("blastoise", r.json()["error"])
+        self.assertEqual(self.client.post(f"/teams/{b}/boss", **self.as_user(1)).status_code, 409)

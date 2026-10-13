@@ -28,7 +28,9 @@ def fake_encounters(tier, unlocked, exclude):
 
 
 def fake_analyze(ids, unlocked):
-    members = [{"id": i, "name": NAMES[i], "baseSpecies": NAMES[i], "isMega": False, "types": []} for i in ids]
+    members = [{"id": i, "name": NAMES[i], "baseSpecies": NAMES[i], "isMega": False, "types": [],
+                "sprite": f"{i}.png", "stats": {}, "statTotal": 300, "weaknesses": [], "resistances": []}
+               for i in ids]
     return {"members": members, "summary": {"statTotal": 300, "weak": {}, "resist": {}, "offensiveTypes": []},
             "forbidden": [NAMES[i] for i in ids if i not in unlocked]}
 
@@ -55,17 +57,20 @@ class CaptureTests(APISimpleTestCase):
     def start(self, starter=4):
         return self.call("post", "/capture/start", {"starter": starter})
 
+    def lancer(self, team=(4,), tier=6):
+        return self.call("post", "/capture/run", {"tier": tier, "pokemonIds": list(team)})
+
     def test_depart_avec_un_starter(self, *_):
         self.assertFalse(self.call("get", "/capture").json()["started"])
         self.assertEqual(self.start(999).status_code, 400)
         r = self.start(4)
         self.assertEqual(r.status_code, 201)
-        self.assertEqual(r.json()["team"], [4])
+        self.assertIsNone(r.json()["run"])
         self.assertEqual(self.start(7).status_code, 409)
 
     def test_run_complete_puis_capture_du_premier_stade(self, *_):
         self.start(4)
-        run = self.call("post", "/capture/run", {"tier": 6}).json()
+        run = self.lancer().json()
         self.assertEqual(len(run["candidates"]), 3)
         self.assertEqual(self.call("post", "/capture/run/fight", {"wildId": 133}).status_code, 400)  # pas proposé
 
@@ -89,18 +94,33 @@ class CaptureTests(APISimpleTestCase):
 
     def test_defaite_termine_la_run(self, *_):
         self.start(4)
-        run = self.call("post", "/capture/run", {"tier": 6}).json()
+        run = self.lancer().json()
         SCENARIO["win"] = False
         r = self.call("post", "/capture/run/fight", {"wildId": run["candidates"][0]["id"]})
         self.assertFalse(r.json()["won"])
         self.assertIsNone(r.json()["run"])
         self.assertEqual(capture.load("1")["victories"], {})
 
-    def test_equipe_avec_pokemon_non_debloque(self, *_):
+    def test_equipe_de_run_avec_pokemon_non_debloque(self, *_):
         self.start(4)
-        r = self.call("put", "/capture/team", {"pokemonIds": [4, 25]})
+        r = self.lancer(team=(4, 25))
         self.assertEqual(r.status_code, 400)
         self.assertIn("pikachu", r.json()["error"])
+        self.assertEqual(self.lancer(team=()).status_code, 400)
+
+    def test_equipe_composee_a_chaque_run_et_figee(self, *_):
+        self.start(4)
+        run = self.lancer().json()
+        self.assertEqual([m["name"] for m in run["team"]], ["charmander"])
+        # relancer pendant une run renvoie la run en cours, sans changer d'équipe
+        self.assertEqual(self.lancer(team=(4, 4)).json()["team"], run["team"])
+        self.call("delete", "/capture/run")
+        self.assertIsNone(self.call("get", "/capture").json()["run"])
+
+    def test_ancienne_run_sans_equipe_annulee(self, *_):
+        self.start(4)
+        capture.captures().update_one({"userId": "1"}, {"$set": {"run": {"tier": 6, "round": 1}}})
+        self.assertIsNone(self.call("get", "/capture").json()["run"])
 
     def test_choix_evolution(self, *_):
         self.start(133)
