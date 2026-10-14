@@ -52,7 +52,7 @@ python manage.py test        # 23 tests, contre MongoDB (Pokédex simulé)
 
 ## Fait partie de PokéTeam
 
-Ce dépôt est un des composants de l'organisation [poketeam-lucas](https://github.com/poketeam-lucas).
+Ce dépôt est un des composants de l'organisation [poketeam-luco7](https://github.com/poketeam-luco7).
 Pour lancer l'application complète (gateway, 3 services, 2 bases), voir le dépôt
-d'orchestration [`poketeam`](https://github.com/poketeam-lucas/poketeam) : `docker-compose.yml`,
+d'orchestration [`poketeam`](https://github.com/poketeam-luco7/poketeam) : `docker-compose.yml`,
 architecture (C4) et décisions d'architecture (ADR).
