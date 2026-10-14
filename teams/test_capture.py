@@ -21,18 +21,25 @@ def fake_state(unlocked, victories):
             "progression": {"unlock": unlock, "choices": choices, "progress": {}}, "tiers": []}
 
 
+TRAINING_TIERS = {2}   # paliers terminés dans ce scénario
+
+
 def fake_encounters(tier, unlocked, exclude):
     pool = [i for i in (16, 19, 21, 23, 25) if i not in exclude]
-    return [{"id": i, "name": NAMES[i], "firstStage": {"id": FIRST.get(i, i), "name": NAMES.get(FIRST.get(i), NAMES[i])}}
-            for i in pool[:3]]
+    return {"training": tier in TRAINING_TIERS,
+            "candidates": [{"id": i, "name": NAMES[i],
+                            "firstStage": {"id": FIRST.get(i, i), "name": NAMES.get(FIRST.get(i), NAMES[i])}}
+                           for i in pool[:3]]}
 
 
-def fake_analyze(ids, unlocked):
+def fake_analyze(ids, unlocked, tier=None):
     members = [{"id": i, "name": NAMES[i], "baseSpecies": NAMES[i], "isMega": False, "types": [],
                 "sprite": f"{i}.png", "stats": {}, "statTotal": 300, "weaknesses": [], "resistances": []}
                for i in ids]
     return {"members": members, "summary": {"statTotal": 300, "weak": {}, "resist": {}, "offensiveTypes": []},
-            "forbidden": [NAMES[i] for i in ids if i not in unlocked]}
+            "forbidden": [NAMES[i] for i in ids if i not in unlocked],
+            # Reptincel (5) est trop fort pour le palier 0 dans ce scénario
+            "tooStrong": [NAMES[i] for i in ids if tier == 0 and i == 5]}
 
 
 def fake_fight(team, wild_id, size):
@@ -133,3 +140,23 @@ class CaptureTests(APISimpleTestCase):
     def test_progression_propre_a_chaque_dresseur(self, *_):
         self.start(4)
         self.assertFalse(self.call("get", "/capture", uid=2).json()["started"])
+
+    def test_entrainement_dans_un_palier_termine(self, *_):
+        self.start(4)
+        run = self.lancer(tier=2).json()
+        self.assertTrue(run["training"])
+        for _ in range(3):
+            wild = self.call("get", "/capture").json()["run"]["candidates"][0]["id"]
+            r = self.call("post", "/capture/run/fight", {"wildId": wild}).json()
+        self.assertTrue(r["won"] and r["trainingComplete"])
+        self.assertIsNone(r["run"])                                  # pas d'étape de capture
+        self.assertEqual(r["victories"], {"charmander": 3})          # mais les victoires comptent
+        self.assertEqual(capture.load("1")["unlocked"], [4, 5])      # Salamèche + évolution, rien capturé
+
+    def test_pokemon_trop_fort_pour_le_palier(self, *_):
+        self.start(4)
+        capture.captures().update_one({"userId": "1"}, {"$addToSet": {"unlocked": 5}})
+        r = self.lancer(team=(4, 5), tier=0)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("charmeleon", r.json()["error"])
+        self.assertEqual(self.lancer(team=(4,), tier=0).status_code, 201)

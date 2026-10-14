@@ -72,12 +72,16 @@ def capture_state(unlocked: list, victories: dict) -> dict:
     return _post_json("/capture/state", {"unlocked": unlocked, "victories": victories})
 
 
-def capture_encounters(tier: int, unlocked: list, exclude: list) -> list:
+def capture_encounters(tier: int, unlocked: list, exclude: list) -> dict:
+    """{training, candidates}"""
     return _post_json("/capture/encounters", {"tier": tier, "unlocked": unlocked, "exclude": exclude})
 
 
-def capture_analyze(pokemon_ids: list, unlocked: list) -> dict:
-    return _post_json("/capture/analyze", {"pokemonIds": pokemon_ids, "unlocked": unlocked})
+def capture_analyze(pokemon_ids: list, unlocked: list, tier: int | None = None) -> dict:
+    body = {"pokemonIds": pokemon_ids, "unlocked": unlocked}
+    if tier is not None:
+        body["tier"] = tier
+    return _post_json("/capture/analyze", body)
 
 
 def capture_fight(team: dict, wild_id: int, team_size: int) -> dict:

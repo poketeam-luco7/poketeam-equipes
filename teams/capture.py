@@ -58,17 +58,21 @@ def public(doc, state):
     }
 
 
-def run_team(ids, unlocked):
-    """Équipe composée au lancement de la run : (membres, summary, None) ou (None, None, erreur)."""
+def run_team(ids, unlocked, tier):
+    """Équipe composée au lancement de la run, pour son palier :
+    (membres, summary, None) ou (None, None, erreur)."""
     ids = [i for i in ids if i not in (None, "", 0)]
     if not 1 <= len(ids) <= MAX_MEMBERS:
         return None, None, error(f"Une équipe contient entre 1 et {MAX_MEMBERS} Pokémon", 400)
     try:
-        analyse = pokedex.capture_analyze(ids, unlocked)
+        analyse = pokedex.capture_analyze(ids, unlocked, tier)
     except pokedex.PokemonInconnu as e:
         return None, None, error(f"Pokémon inconnu : {e}", 400)
     if analyse["forbidden"]:
         return None, None, error(f"Pas encore débloqué : {', '.join(analyse['forbidden'])}", 400)
+    if analyse.get("tooStrong"):
+        return None, None, error(
+            f"Trop fort pour ce palier (2 paliers ou plus au-dessus) : {', '.join(analyse['tooStrong'])}", 400)
     regle = check_species(analyse["members"]) or check_megas(analyse["members"])
     if regle:
         return None, None, error(regle, 400)
@@ -113,14 +117,15 @@ class CaptureRunView(AuthenticatedView):
         tier = request.data.get("tier")
         if not isinstance(tier, int):
             return error("Palier invalide", 400)
-        members, summary, err = run_team(request.data.get("pokemonIds", []), doc["unlocked"])
+        members, summary, err = run_team(request.data.get("pokemonIds", []), doc["unlocked"], tier)
         if err:
             return err
-        candidates = pokedex.capture_encounters(tier, doc["unlocked"], [])
-        if not candidates:
-            return error("Plus aucun Pokémon à capturer dans ce palier", 400)
-        run = {"tier": tier, "round": 1, "candidates": candidates, "defeated": [], "reward": False,
-               "team": members, "summary": summary}
+        tirage = pokedex.capture_encounters(tier, doc["unlocked"], [])
+        if not tirage["candidates"]:
+            return error("Aucun Pokémon dans ce palier", 400)
+        # Palier terminé : entraînement (victoires pour les évolutions, pas de capture)
+        run = {"tier": tier, "round": 1, "candidates": tirage["candidates"], "defeated": [], "reward": False,
+               "training": tirage["training"], "team": members, "summary": summary}
         captures().update_one({"userId": self.uid}, {"$set": {"run": run}})
         return Response(run, status=status.HTTP_201_CREATED)
 
@@ -148,11 +153,16 @@ class CaptureFightView(AuthenticatedView):
             inc = {f"victories.{m['baseSpecies']}": 1 for m in team}
             defeated = run["defeated"] + [wild]
             finished = len(defeated) >= ROUNDS_PER_RUN
-            new_run = {**run, "defeated": defeated, "round": run["round"] + 1, "reward": finished,
-                       "candidates": [] if finished else pokedex.capture_encounters(
-                           run["tier"], doc["unlocked"], [d["id"] for d in defeated])}
-            if not finished and not new_run["candidates"]:
-                new_run.update(reward=True, candidates=[])   # palier épuisé : on récompense quand même
+            training = run.get("training", False)
+            candidates = [] if finished else pokedex.capture_encounters(
+                run["tier"], doc["unlocked"], [d["id"] for d in defeated])["candidates"]
+            if finished and training:
+                new_run = None                                # entraînement réussi : pas de capture
+            else:
+                new_run = {**run, "defeated": defeated, "round": run["round"] + 1,
+                           "reward": finished, "candidates": candidates}
+                if not finished and not candidates:
+                    new_run.update(reward=True, candidates=[])   # palier épuisé : on récompense quand même
             # Condition sur le numéro de manche : un double clic ne compte pas deux fois
             updated = captures().find_one_and_update(
                 {"userId": self.uid, "run.round": run["round"]},
@@ -169,7 +179,9 @@ class CaptureFightView(AuthenticatedView):
             "A": {"nom": "Ton équipe", "summary": run["summary"], "members": team},
             "B": {"nom": wild["name"], "sauvage": True, "members": [{**result["wild"], "pokemonId": wild["id"]}]},
         }
-        return Response({"combat": result, "won": won, "evolutions": unlocked_now, **public(doc, state)})
+        training_done = won and run.get("training", False) and len(run["defeated"]) + 1 >= ROUNDS_PER_RUN
+        return Response({"combat": result, "won": won, "evolutions": unlocked_now,
+                         "trainingComplete": training_done, **public(doc, state)})
 
 
 class CaptureRewardView(AuthenticatedView):

@@ -47,7 +47,7 @@ python manage.py runserver 8002      # nécessite MongoDB et le Pokédex
 ## Tests
 
 ```bash
-python manage.py test        # 23 tests, contre MongoDB (Pokédex simulé)
+python manage.py test        # 25 tests, contre MongoDB (Pokédex simulé)
 ```
 
 ## Fait partie de PokéTeam
