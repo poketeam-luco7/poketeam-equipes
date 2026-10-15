@@ -72,7 +72,7 @@ def run_team(ids, unlocked, tier):
         return None, None, error(f"Pas encore débloqué : {', '.join(analyse['forbidden'])}", 400)
     if analyse.get("tooStrong"):
         return None, None, error(
-            f"Trop fort pour ce palier (2 paliers ou plus au-dessus) : {', '.join(analyse['tooStrong'])}", 400)
+            f"Trop fort pour cet entraînement (2 paliers ou plus au-dessus) : {', '.join(analyse['tooStrong'])}", 400)
     regle = check_species(analyse["members"]) or check_megas(analyse["members"])
     if regle:
         return None, None, error(regle, 400)

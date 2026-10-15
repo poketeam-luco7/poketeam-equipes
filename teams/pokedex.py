@@ -11,6 +11,10 @@ class PokedexIndisponible(Exception):
     pass
 
 
+class PokedexRefus(Exception):
+    """Le Pokédex refuse l'action (règle du jeu) : le message est à montrer au dresseur."""
+
+
 def _post(path: str, body: dict) -> httpx.Response:
     try:
         return httpx.post(f"{settings.POKEDEX_URL}{path}", json=body, timeout=30)
@@ -38,6 +42,8 @@ def compare(team_a: dict, team_b: dict) -> dict:
 
 def fight_boss(team: dict) -> dict:
     r = _post("/boss/fight", {"team": team})
+    if r.status_code == 400:
+        raise PokedexRefus(r.json().get("detail", "Combat refusé"))
     if r.status_code != 200:
         raise PokedexIndisponible()
     return r.json()
@@ -91,3 +97,20 @@ def capture_fight(team: dict, wild_id: int, team_size: int) -> dict:
 def capture_locked(teams: dict) -> dict:
     """{clé: {pokemonIds, unlocked}} -> {clé: [Pokémon non débloqués]}"""
     return _post_json("/capture/locked", {"teams": teams})
+
+
+# --- Donjons ------------------------------------------------------------------------
+
+def dungeons_state(unlocked: list) -> dict:
+    return _post_json("/dungeons/state", {"unlocked": unlocked})
+
+
+def dungeon_fight(team: dict, dungeon_id: int, unlocked: list) -> dict:
+    r = _post("/dungeons/fight", {"team": team, "dungeonId": dungeon_id, "unlocked": unlocked})
+    if r.status_code == 400:
+        raise PokedexRefus(r.json().get("detail", "Entrée refusée"))
+    if r.status_code == 404:
+        raise PokemonInconnu(r.json().get("detail", ""))
+    if r.status_code != 200:
+        raise PokedexIndisponible()
+    return r.json()

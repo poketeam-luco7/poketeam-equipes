@@ -19,12 +19,14 @@ MongoDB). Il stocke ; le Pokédex calcule (analyse, combats, règles de capture)
 | GET · PUT · DELETE | `/teams/{id}` | Lire, modifier, supprimer (propriétaire) |
 | GET | `/teams/public` | Équipes publiques |
 | POST | `/teams/{a}/versus/{b}` | Affrontement |
-| POST | `/teams/{id}/boss` | Combat contre le boss de la semaine |
+| POST | `/teams/{id}/boss` | Combat contre le boss final |
 | GET | `/capture` | Progression (collection, Pokédex, paliers, évolutions) |
 | POST | `/capture/start` | Choisir son starter |
 | POST · DELETE | `/capture/run` | Lancer une run (palier + équipe) ou l'abandonner |
 | POST | `/capture/run/fight`, `/capture/run/reward` | Combattre, capturer |
 | POST | `/capture/evolution` | Choisir une branche d'évolution |
+| GET | `/dungeons` | Donjons visibles et boss final |
+| POST | `/dungeons/{id}/fight` | Entrer dans un donjon avec une équipe |
 
 Toutes les routes exigent l'en-tête `X-User-Id`, posé par la gateway après vérification du JWT.
 
@@ -47,7 +49,7 @@ python manage.py runserver 8002      # nécessite MongoDB et le Pokédex
 ## Tests
 
 ```bash
-python manage.py test        # 25 tests, contre MongoDB (Pokédex simulé)
+python manage.py test        # 31 tests, contre MongoDB (Pokédex simulé)
 ```
 
 ## Fait partie de PokéTeam

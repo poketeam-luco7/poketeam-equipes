@@ -188,35 +188,6 @@ class VersusView(AuthenticatedView):
         return Response(result)
 
 
-class BossView(AuthenticatedView):
-    def post(self, request, team_id):
-        """Ton équipe contre le boss de la semaine."""
-        team = find_team(team_id)
-        if team is None or team["userId"] != self.uid:
-            return error("Équipe introuvable", 404)
-        bloque = check_playable(team)
-        if bloque:
-            return bloque
-        try:
-            result = pokedex.fight_boss({"name": team["nom"], **team["summary"]})
-        except pokedex.PokedexIndisponible:
-            return error("Service Pokédex indisponible", 503)
-        boss = result["boss"]
-        # Même format que le versus : le front réutilise la même arène
-        result["teams"] = {
-            "A": to_api(team),
-            "B": {
-                "nom": boss["name"],
-                "boss": True,
-                "members": [{
-                    "pokemonId": boss["id"], "name": boss["name"], "sprite": boss["sprite"],
-                    "artwork": boss["artwork"], "types": boss["types"], "isMega": boss.get("isMega", False),
-                }],
-            },
-        }
-        return Response(result)
-
-
 class HealthView(APIView):
     def get(self, request):
         return Response({"status": "ok"})
