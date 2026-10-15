@@ -54,6 +54,8 @@ def public(doc, state):
         # Pour la création d'équipe (silhouettes) et le Pokédex du dresseur
         "unlockedSpecies": state.get("unlockedSpecies", []),
         "unlockedMegas": state.get("unlockedMegas", []),
+        "improvedForms": state.get("improvedForms", []),
+        "unlockedForms": state.get("unlockedForms", []),
         "pokedex": state.get("pokedex"),
     }
 
